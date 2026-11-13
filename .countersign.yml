@@ -1,0 +1,47 @@
+# Countersign policy for this repository (merged over Countersign's defaults).
+# Changing this file changes how much humans must read — so it is reviewed like code.
+version: "2026-11-14.mp1"
+
+requirement:
+  pattern: "REQ-(\\d+)"
+  source: "github-issues"
+  repo: "MessagePack-CSharp/MessagePack-CSharp"
+
+areas:
+  - name: "runtime-core"
+    paths: ["src/MessagePack/**", "src/MessagePack.Experimental/**"]
+    criticality: high
+    securitySensitive: true   # deserialises untrusted bytes
+  - name: "annotations-api"
+    paths: ["src/MessagePack.Annotations/**"]
+    criticality: high
+    publicApi: true           # attributes users put in their code
+  - name: "source-generator"
+    paths: ["src/MessagePack.SourceGenerator/**"]
+    criticality: high         # runs inside every consumer's compiler
+  - name: "analyzers"
+    paths: ["src/MessagePack.Analyzers/**", "src/MessagePack.SourceGenerator/Analyzers/**"]
+    criticality: medium
+  - name: "generated-snapshots"
+    paths: ["tests/**/Resources/**"]
+    criticality: low
+  - name: "tests"
+    paths: ["tests/**"]
+    criticality: low
+  - name: "docs"
+    paths: ["**/*.md", "doc/**"]
+    criticality: low
+  - name: "build"
+    paths: ["**/*.csproj", "**/*.props", "**/*.targets", "global.json", "azure-pipelines/**", "*.sln"]
+    criticality: medium
+
+sandbox:
+  adapter: "dotnet"
+  testRoots: ["tests/"]
+  framework: "net8.0"
+  maxAblations: 10
+  canaries: 4
+  testMap:
+    "src/MessagePack.SourceGenerator/": "tests/MessagePack.SourceGenerator.Tests"
+    "src/MessagePack.Annotations/": "tests/MessagePack.SourceGenerator.Tests"
+    "src/MessagePack.Analyzers/": "tests/MessagePack.Analyzers.Tests"
