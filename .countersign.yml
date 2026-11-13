@@ -16,12 +16,12 @@ areas:
     paths: ["src/MessagePack.Annotations/**"]
     criticality: high
     publicApi: true           # attributes users put in their code
-  - name: "source-generator"
-    paths: ["src/MessagePack.SourceGenerator/**"]
-    criticality: high         # runs inside every consumer's compiler
   - name: "analyzers"
     paths: ["src/MessagePack.Analyzers/**", "src/MessagePack.SourceGenerator/Analyzers/**"]
     criticality: medium
+  - name: "source-generator"
+    paths: ["src/MessagePack.SourceGenerator/**"]
+    criticality: high         # runs inside every consumer's compiler
   - name: "generated-snapshots"
     paths: ["tests/**/Resources/**"]
     criticality: low
