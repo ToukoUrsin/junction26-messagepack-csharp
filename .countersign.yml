@@ -41,6 +41,11 @@ sandbox:
   framework: "net8.0"
   maxAblations: 10
   canaries: 4
+  # test projects that load the freshly built generator into the compiler need the newer SDK (Roslyn 4.12)
+  sdk:
+    "tests/MessagePack.SourceGenerator.ExecutionTests": "9.0.100"
+    "tests/MessagePack.SourceGenerator.MapModeExecutionTests": "9.0.100"
+    "tests/MessagePack.GeneratedCode.Tests": "9.0.100"
   testMap:
     "src/MessagePack.SourceGenerator/": "tests/MessagePack.SourceGenerator.Tests"
     "src/MessagePack.Annotations/": "tests/MessagePack.SourceGenerator.Tests"
