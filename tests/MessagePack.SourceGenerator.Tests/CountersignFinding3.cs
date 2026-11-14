@@ -9,6 +9,35 @@ using Microsoft.CodeAnalysis.Testing;
 
 public class CountersignFinding3
 {
+    private const string MetadataStructLib = """
+using MessagePack;
+namespace Lib
+{
+    [MessagePackObject]
+    public struct MyGeneric<T>
+    {
+        [Key(0)]
+        public string Key { get; set; }
+
+        public int Unkeyed { get; set; }
+    }
+}
+""";
+
+    private const string MetadataStructApp = """
+using MessagePack;
+using Lib;
+namespace App
+{
+    [MessagePackObject]
+    public class Holder
+    {
+        [Key(0)]
+        public MyGeneric<int> Value { get; set; }
+    }
+}
+""";
+
     private readonly ITestOutputHelper logger;
 
     public CountersignFinding3(ITestOutputHelper logger) => this.logger = logger;
@@ -98,5 +127,52 @@ namespace App
         }
 
         Assert.Contains(diags, d => d.Id == MsgPack00xMessagePackAnalyzer.DeserializingConstructorId);
+    }
+
+    private async Task<ImmutableArray<Diagnostic>> RunMetadataStructAsync(bool asCompilationReference)
+    {
+        ImmutableArray<MetadataReference> fx = await ReferenceAssemblies.Net.Net80.ResolveAsync(LanguageNames.CSharp, CancellationToken.None);
+        var refs = fx.Concat(ReferencesHelper.GetReferences(ReferencesSet.MessagePack)).ToList();
+        var libComp = CSharpCompilation.Create("Lib", new[] { CSharpSyntaxTree.ParseText(MetadataStructLib) }, refs, new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+        if (asCompilationReference)
+        {
+            refs.Add(libComp.ToMetadataReference());
+        }
+        else
+        {
+            using var ms = new MemoryStream();
+            var emit = libComp.Emit(ms);
+            Assert.True(emit.Success, string.Join("\n", emit.Diagnostics));
+            refs.Add(MetadataReference.CreateFromImage(ms.ToArray()));
+        }
+
+        var appComp = CSharpCompilation.Create("App", new[] { CSharpSyntaxTree.ParseText(MetadataStructApp) }, refs, new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+        ImmutableArray<Diagnostic> diags = await appComp.WithAnalyzers(ImmutableArray.Create<DiagnosticAnalyzer>(new MsgPack00xMessagePackAnalyzer())).GetAllDiagnosticsAsync();
+        this.logger.WriteLine($"compilationRef={asCompilationReference}");
+        foreach (Diagnostic d in diags)
+        {
+            this.logger.WriteLine(d.ToString());
+        }
+
+        return diags;
+    }
+
+    [Fact]
+    public async Task ImageReference_ReportsMsgPack004()
+    {
+        ImmutableArray<Diagnostic> diags = await this.RunMetadataStructAsync(asCompilationReference: false);
+        Assert.DoesNotContain(diags, d => d.Id == "AD0001");
+        Assert.Contains(diags, d => d.Id == MsgPack00xMessagePackAnalyzer.MemberNeedsKey.Id);
+    }
+
+    /// <summary>
+    /// Exercises the branch of TypeCollector.ReportIfLocatedInCompilation that drops diagnostics located in another compilation's syntax tree.
+    /// Only the absence of an analyzer crash is asserted; whether such diagnostics should be relocated or dropped is still open.
+    /// </summary>
+    [Fact]
+    public async Task CompilationReference_NoCrash()
+    {
+        ImmutableArray<Diagnostic> diags = await this.RunMetadataStructAsync(asCompilationReference: true);
+        Assert.DoesNotContain(diags, d => d.Id == "AD0001");
     }
 }
