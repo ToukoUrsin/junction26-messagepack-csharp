@@ -581,7 +581,7 @@ partial class AppResolver { }
 
     /// <summary>
     /// Asserts that a closed generic value type from a referenced assembly whose members lack a key attribute
-    /// does not crash the generator or analyzer, since its member diagnostics belong to the defining assembly.
+    /// does not crash the generator or analyzer, and that MsgPack004 is still reported (without a source location) in the consuming project.
     /// </summary>
     /// <remarks>
     /// See https://github.com/MessagePack-CSharp/MessagePack-CSharp/issues/2283.
@@ -622,15 +622,24 @@ namespace TempProject
 }
 """;
 
-        await RunWithMetadataReferenceAsync(defineSource, usageSource, "TempProject.MyResolver.g.cs");
+        // These are reported once for the open and once for the closed generic type; that duplication is current behavior, not a requirement.
+        await RunWithMetadataReferenceAsync(
+            defineSource,
+            usageSource,
+            "TempProject.MyResolver.g.cs",
+            expectedDiagnostics: new[]
+            {
+                new DiagnosticResult(MessagePack.SourceGenerator.Analyzers.MsgPack00xMessagePackAnalyzer.MemberNeedsKey).WithArguments("global::TempProject.MyGenericStruct<T>", "Unkeyed"),
+                new DiagnosticResult(MessagePack.SourceGenerator.Analyzers.MsgPack00xMessagePackAnalyzer.MemberNeedsKey).WithArguments("global::TempProject.MyGenericStruct<int>", "Unkeyed"),
+            });
     }
 
     /// <summary>
     /// Compiles <paramref name="defineSource"/> to an assembly image, then verifies that the analyzers and the generator
-    /// handle <paramref name="usageSource"/> without diagnostics, referencing that image as metadata only,
+    /// handle <paramref name="usageSource"/> with only <paramref name="expectedDiagnostics"/>, referencing that image as metadata only,
     /// and that the resolver named <paramref name="expectedResolverHintName"/> is generated.
     /// </summary>
-    private static async Task RunWithMetadataReferenceAsync(string defineSource, string usageSource, string expectedResolverHintName, LanguageVersion languageVersion = LanguageVersion.CSharp7_3)
+    private static async Task RunWithMetadataReferenceAsync(string defineSource, string usageSource, string expectedResolverHintName, LanguageVersion languageVersion = LanguageVersion.CSharp7_3, DiagnosticResult[]? expectedDiagnostics = null)
     {
         MetadataReference definingAssembly = await CompileToMetadataReferenceAsync("DefiningProject", defineSource, languageVersion);
 
@@ -645,6 +654,7 @@ namespace TempProject
             },
         };
         test.TestState.AdditionalReferences.Add(definingAssembly);
+        test.ExpectedDiagnostics.AddRange(expectedDiagnostics ?? Array.Empty<DiagnosticResult>());
         await test.RunAsync();
 
         // Verify that the resolver was actually generated for the usage assembly, since the defect caused it to be silently omitted.

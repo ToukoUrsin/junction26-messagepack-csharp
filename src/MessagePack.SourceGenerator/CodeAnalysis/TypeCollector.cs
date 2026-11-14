@@ -1,4 +1,4 @@
-// Copyright (c) All contributors. All rights reserved.
+﻿// Copyright (c) All contributors. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 #pragma warning disable SA1402 // File may only contain a single type
@@ -1431,19 +1431,24 @@ public class TypeCollector
     /// </summary>
     /// <param name="property">The property symbol. It may be declared in metadata, in which case <see langword="null" /> is returned.</param>
     /// <returns>The location of the identifier, or <see langword="null" /> if the property has no declaration in source.</returns>
-    private static Location? GetPropertyIdentifierLocation(IPropertySymbol property) => (property.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() as PropertyDeclarationSyntax)?.Identifier.GetLocation();
+    private static Location? GetPropertyIdentifierLocation(IPropertySymbol property) => property.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() switch
+    {
+        PropertyDeclarationSyntax propertySyntax => propertySyntax.Identifier.GetLocation(),
+        ParameterSyntax parameterSyntax => parameterSyntax.Identifier.GetLocation(), // positional record property
+        _ => null,
+    };
 
     /// <summary>
-    /// Reports a diagnostic only when its location belongs to the compilation being analyzed.
+    /// Reports a diagnostic unless its location is in a syntax tree that does not belong to the compilation being analyzed.
     /// </summary>
     /// <remarks>
-    /// Types and members that come from metadata (or from another compilation) have no location in the compilation being analyzed.
-    /// Their problems are reported by the compilation that defines them, so they are dropped here rather than being reported
-    /// against a location that does not exist, which analyzers are not permitted to do.
+    /// Analyzers are not permitted to report diagnostics against a syntax tree outside the analyzed compilation, so such diagnostics are dropped.
+    /// Diagnostics without a source location (e.g. about types and members that come from metadata) are still reported,
+    /// using <see cref="Location.None"/>.
     /// </remarks>
     private void ReportIfLocatedInCompilation(Action<Diagnostic> report, Diagnostic diagnostic)
     {
-        if (diagnostic.Location.IsInSource && this.compilation.ContainsSyntaxTree(diagnostic.Location.SourceTree))
+        if (!diagnostic.Location.IsInSource || this.compilation.ContainsSyntaxTree(diagnostic.Location.SourceTree))
         {
             report(diagnostic);
         }
