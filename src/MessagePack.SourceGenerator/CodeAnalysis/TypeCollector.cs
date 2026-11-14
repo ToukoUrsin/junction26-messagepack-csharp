@@ -1,4 +1,4 @@
-// Copyright (c) All contributors. All rights reserved.
+﻿// Copyright (c) All contributors. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 #pragma warning disable SA1402 // File may only contain a single type
@@ -236,7 +236,7 @@ public class TypeCollector
     private TypeCollector(Compilation compilation, AnalyzerOptions options, ReferenceSymbols referenceSymbols, ITypeSymbol targetType, Action<Diagnostic>? reportAnalyzerDiagnostic, CancellationToken cancellationToken)
     {
         this.typeReferences = referenceSymbols;
-        this.reportDiagnostic = reportAnalyzerDiagnostic;
+        this.reportDiagnostic = reportAnalyzerDiagnostic is null ? null : diagnostic => ReportIfLocatedInCompilation(reportAnalyzerDiagnostic, diagnostic);
         this.options = options;
         this.compilation = compilation;
         this.cancellationToken = cancellationToken;
@@ -750,7 +750,7 @@ public class TypeCollector
 
         HashSet<Diagnostic> reportedDiagnostics = new();
         IEnumerable<ISymbol> instanceMembers = formattedType.GetAllMembers()
-            .Where(m => m is IFieldSymbol or IPropertySymbol && !(m.IsStatic || m.IsOverride || m.IsImplicitlyDeclared));
+            .Where(m => m is IFieldSymbol or IPropertySymbol && !(m.IsStatic || m.IsOverride || IsCompilerGenerated(m)));
 
         // The actual member identifiers of each serializable member,
         // such that we'll recognize collisions as we enumerate members in base types
@@ -982,7 +982,7 @@ public class TypeCollector
                     var stringKey = key is { Value: string stringKeyValue } ? stringKeyValue : default;
                     if (intKey == null && stringKey == null)
                     {
-                        this.reportDiagnostic?.Invoke(Diagnostic.Create(MsgPack00xMessagePackAnalyzer.BothStringAndIntKeyAreNull, ((PropertyDeclarationSyntax)item.DeclaringSyntaxReferences[0].GetSyntax()).Identifier.GetLocation(), formattedType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), item.Name));
+                        this.reportDiagnostic?.Invoke(Diagnostic.Create(MsgPack00xMessagePackAnalyzer.BothStringAndIntKeyAreNull, GetPropertyIdentifierLocation(item), formattedType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), item.Name));
                     }
 
                     // A property with an init accessor and an initializer has a default that will be discarded by the deserializer.
@@ -1047,7 +1047,7 @@ public class TypeCollector
 
             foreach (IFieldSymbol item in formattedType.GetAllMembers().OfType<IFieldSymbol>())
             {
-                if (item.IsImplicitlyDeclared || item.IsStatic)
+                if (IsCompilerGenerated(item) || item.IsStatic)
                 {
                     continue;
                 }
@@ -1074,7 +1074,7 @@ public class TypeCollector
                             {
                                 Diagnostic diagnostic = derivedKeyAttribute is not null && suppressSourceGeneration is not true
                                     ? Diagnostic.Create(MsgPack00xMessagePackAnalyzer.AOTDerivedKeyAttribute, derivedKeyAttribute.GetSyntax(this.cancellationToken).GetLocation())
-                                    : Diagnostic.Create(MsgPack00xMessagePackAnalyzer.MemberNeedsKey, item.DeclaringSyntaxReferences[0].GetSyntax().GetLocation(), formattedType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), item.Name);
+                                    : Diagnostic.Create(MsgPack00xMessagePackAnalyzer.MemberNeedsKey, item.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax().GetLocation(), formattedType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), item.Name);
                                 if (nonPublicMembersAreSerialized || (item.DeclaredAccessibility & Accessibility.Public) == Accessibility.Public)
                                 {
                                     this.reportDiagnostic?.Invoke(diagnostic);
@@ -1425,6 +1425,43 @@ public class TypeCollector
     }
 
     private static Location? GetIdentifierLocation(INamedTypeSymbol type) => ((BaseTypeDeclarationSyntax?)type.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax())?.Identifier.GetLocation();
+
+    /// <summary>
+    /// Gets the location of the identifier of a property, if it is declared in source.
+    /// </summary>
+    /// <param name="property">The property symbol. It may be declared in metadata, in which case <see langword="null" /> is returned.</param>
+    /// <returns>The location of the identifier, or <see langword="null" /> if the property has no declaration in source.</returns>
+    private static Location? GetPropertyIdentifierLocation(IPropertySymbol property) => property.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() switch
+    {
+        PropertyDeclarationSyntax propertySyntax => propertySyntax.Identifier.GetLocation(),
+        ParameterSyntax parameterSyntax => parameterSyntax.Identifier.GetLocation(), // positional record property
+        _ => null,
+    };
+
+    /// <summary>
+    /// Reports a diagnostic unless its location is in a syntax tree that does not belong to the compilation being analyzed.
+    /// </summary>
+    /// <remarks>
+    /// Analyzers are not permitted to report diagnostics against a syntax tree outside the analyzed compilation, so such diagnostics are dropped.
+    /// Diagnostics without a source location (e.g. about types and members that come from metadata) are still reported,
+    /// using <see cref="Location.None"/>.
+    /// </remarks>
+    private void ReportIfLocatedInCompilation(Action<Diagnostic> report, Diagnostic diagnostic)
+    {
+        if (!diagnostic.Location.IsInSource || this.compilation.ContainsSyntaxTree(diagnostic.Location.SourceTree))
+        {
+            report(diagnostic);
+        }
+    }
+
+    /// <summary>
+    /// Gets a value indicating whether a member was generated by the compiler (e.g. an auto-property backing field).
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ISymbol.IsImplicitlyDeclared"/> is <see langword="false"/> for such members when they come from metadata,
+    /// so unspeakable names (which C# source cannot declare) are also treated as compiler-generated.
+    /// </remarks>
+    private static bool IsCompilerGenerated(ISymbol member) => member.IsImplicitlyDeclared || member.Name.StartsWith("<", StringComparison.Ordinal);
 
     private static Location? GetLocation(IParameterSymbol parameter) => parameter.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax().GetLocation();
 
